@@ -5,7 +5,6 @@ Asana 購案商機 — 每日更新摘要
 """
 
 import os
-import json
 import requests
 from datetime import datetime, timedelta, timezone
 
@@ -20,6 +19,10 @@ ASANA_BASE = "https://app.asana.com/api/1.0"
 
 # 台灣時區 UTC+8
 TW_TZ = timezone(timedelta(hours=8))
+
+# 前日開立發票：偵測任務移動到/移出此區段（工作流程 1213428558979322 的觸發點）
+INVOICE_SECTION_NAME = "售後服務(已開立發票、未收款)"
+AMOUNT_FIELD_GID = "1211061298683016"  # 實際成交金額(稅後)
 
 
 def asana_get(endpoint, params=None):
@@ -36,6 +39,7 @@ def asana_get(endpoint, params=None):
         if next_page and next_page.get("offset"):
             if params is None:
                 params = {}
+            params = dict(params)
             params["offset"] = next_page["offset"]
         else:
             break
@@ -75,9 +79,22 @@ def get_task_stories(task_gid):
     return asana_get(f"tasks/{task_gid}/stories", params)
 
 
+def get_task_amount(task_gid):
+    """取得任務的實際成交金額(稅後) custom field 值"""
+    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
+    params = {"opt_fields": f"custom_fields.gid,custom_fields.number_value"}
+    resp = requests.get(f"{ASANA_BASE}/tasks/{task_gid}", headers=headers, params=params)
+    resp.raise_for_status()
+    for cf in resp.json().get("data", {}).get("custom_fields", []):
+        if cf.get("gid") == AMOUNT_FIELD_GID:
+            return cf.get("number_value")
+    return None
+
+
 def filter_stories_in_range(stories, since_utc, until_utc):
-    """篩選時間範圍內購案商機專案的 section_changed 和 comment_added"""
+    """篩選時間範圍內的 section_changed、invoice_section_changed 和 comment_added"""
     section_changes = []
+    invoice_section_changes = []
     comments = []
 
     for story in stories:
@@ -91,17 +108,24 @@ def filter_stories_in_range(stories, since_utc, until_utc):
         creator_name = creator.get("name", "系統") if creator else "系統"
 
         if subtype == "section_changed" and "購案商機" in text:
-            section_changes.append({
-                "text": text,
-                "creator": creator_name,
-            })
+            # 偵測與開立發票區段相關的移動（移入或移出皆計算）
+            if INVOICE_SECTION_NAME in text:
+                invoice_section_changes.append({
+                    "text": text,
+                    "creator": creator_name,
+                })
+            else:
+                section_changes.append({
+                    "text": text,
+                    "creator": creator_name,
+                })
         elif subtype == "comment_added":
             comments.append({
                 "text": text,
                 "creator": creator_name,
             })
 
-    return section_changes, comments
+    return section_changes, invoice_section_changes, comments
 
 
 def parse_section_change(text):
@@ -114,7 +138,7 @@ def parse_section_change(text):
         return None, None
 
 
-def build_message(new_tasks, section_moves, new_comments, since_tw, until_tw):
+def build_message(invoice_tasks, invoice_total, new_tasks, section_moves, new_comments, since_tw, until_tw):
     """組合 Slack 訊息"""
     weekdays = ["一", "二", "三", "四", "五", "六", "日"]
     since_str = f"{since_tw.strftime('%Y/%m/%d')} ({weekdays[since_tw.weekday()]}) {since_tw.strftime('%H:%M')}"
@@ -127,11 +151,28 @@ def build_message(new_tasks, section_moves, new_comments, since_tw, until_tw):
     lines.append("---")
     lines.append("")
 
-    # 新建任務
+    # 前日開立發票總額（置頂）
+    lines.append("▶ 【前日開立發票總額】")
+    lines.append("")
+    if invoice_tasks:
+        total_str = f"NT$ {invoice_total:,.0f}" if invoice_total > 0 else "（所有任務均未填寫金額）"
+        lines.append(f"💰 合計：{total_str}")
+        lines.append("")
+        for task in invoice_tasks:
+            amt = task["amount"]
+            amt_str = f"NT$ {amt:,.0f}" if amt is not None else "（未填寫）"
+            lines.append(f"• {task['name']} — {amt_str}")
+    else:
+        lines.append("此時段內無開立發票紀錄")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # 新建任務（依建立者排序）
     lines.append("▶ 【新建立的任務】")
     lines.append("")
     if new_tasks:
-        for task in new_tasks:
+        for task in sorted(new_tasks, key=lambda t: t.get("creator", "")):
             name = task.get("name", "未命名")
             creator = task.get("creator", "未知")
             section = task.get("section", "")
@@ -241,6 +282,8 @@ def main():
 
     all_section_moves = []
     all_comments = []
+    invoice_tasks = []
+    invoice_total = 0
 
     for i, task in enumerate(modified_tasks):
         task_gid = task["gid"]
@@ -253,7 +296,7 @@ def main():
             print(f"   ⚠️ 跳過（取得 stories 失敗）: {e}")
             continue
 
-        section_changes, comments = filter_stories_in_range(stories, since_iso, until_iso)
+        section_changes, invoice_changes, comments = filter_stories_in_range(stories, since_iso, until_iso)
 
         for sc in section_changes:
             from_sec, to_sec = parse_section_change(sc["text"])
@@ -265,6 +308,20 @@ def main():
                     "creator": sc["creator"],
                 })
 
+        # 前日開立發票：同一任務只計算一次金額
+        if invoice_changes:
+            try:
+                amount = get_task_amount(task_gid)
+            except Exception as e:
+                print(f"   ⚠️ 取得金額失敗: {e}")
+                amount = None
+            invoice_tasks.append({
+                "name": task_name,
+                "amount": amount,
+            })
+            if amount is not None:
+                invoice_total += amount
+
         for c in comments:
             all_comments.append({
                 "task_name": task_name,
@@ -273,12 +330,13 @@ def main():
             })
 
     print(f"\n📊 統計:")
+    print(f"   前日開立發票: {len(invoice_tasks)} 筆，合計 NT$ {invoice_total:,.0f}")
     print(f"   新建任務: {len(new_tasks)}")
     print(f"   階段移動: {len(all_section_moves)}")
     print(f"   新評論: {len(all_comments)}")
 
     # 3. 組合訊息
-    message = build_message(new_tasks, all_section_moves, all_comments, since_tw, until_tw)
+    message = build_message(invoice_tasks, invoice_total, new_tasks, all_section_moves, all_comments, since_tw, until_tw)
 
     # 4. 發送到 Slack
     print("\n📤 發送到 Slack...")
