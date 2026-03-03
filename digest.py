@@ -66,10 +66,20 @@ def search_modified_tasks(since_utc, until_utc):
         "modified_at.after": since_utc,
         "modified_at.before": until_utc,
         "projects.any": ASANA_PROJECT_GID,
-        "opt_fields": "name,modified_at",
+        "opt_fields": "name,modified_at,parent.name,parent.gid",
         "limit": 100,
     }
     return asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
+
+
+def task_url(task_gid):
+    """產生 Asana 任務連結"""
+    return f"https://app.asana.com/0/{ASANA_PROJECT_GID}/{task_gid}"
+
+
+def slack_link(url, text):
+    """產生 Slack 可點擊連結格式"""
+    return f"<{url}|{text}>"
 
 
 def get_task_stories(task_gid):
@@ -169,7 +179,8 @@ def build_message(invoice_tasks, invoice_total, new_tasks, section_moves, new_co
         for task in invoice_tasks:
             amt = task["amount"]
             amt_str = f"NT$ {amt:,.0f}" if amt is not None else "（未填寫）"
-            lines.append(f"• {task['name']} — {amt_str}")
+            name_link = slack_link(task_url(task["task_gid"]), task["name"])
+            lines.append(f"• {name_link} — {amt_str}")
     else:
         lines.append("此時段內無開立發票紀錄")
     lines.append("")
@@ -181,10 +192,10 @@ def build_message(invoice_tasks, invoice_total, new_tasks, section_moves, new_co
     lines.append("")
     if new_tasks:
         for task in sorted(new_tasks, key=lambda t: t.get("creator", "")):
-            name = task.get("name", "未命名")
+            name_link = slack_link(task_url(task["gid"]), task.get("name", "未命名"))
             creator = task.get("creator", "未知")
             section = task.get("section", "")
-            line = f"• {name} — 建立者：{creator}"
+            line = f"• {name_link} — 建立者：{creator}"
             if section:
                 line += f"\n  目前階段：{section}"
             lines.append(line)
@@ -199,11 +210,11 @@ def build_message(invoice_tasks, invoice_total, new_tasks, section_moves, new_co
     lines.append("")
     if section_moves:
         for move in section_moves:
-            name = move["task_name"]
+            name_link = slack_link(task_url(move["task_gid"]), move["task_name"])
             from_section = move["from_section"]
             to_section = move["to_section"]
             creator = move["creator"]
-            lines.append(f"• {name}")
+            lines.append(f"• {name_link}")
             lines.append(f"  `{from_section}` → `{to_section}`（操作者：{creator}）")
             lines.append("")
     else:
@@ -217,12 +228,22 @@ def build_message(invoice_tasks, invoice_total, new_tasks, section_moves, new_co
     lines.append("")
     if new_comments:
         for comment in new_comments:
-            name = comment["task_name"]
+            task_gid = comment["task_gid"]
+            task_name = comment["task_name"]
+            parent_gid = comment.get("parent_gid")
+            parent_name = comment.get("parent_name")
             creator = comment["creator"]
             text = comment["text"]
             if len(text) > 200:
                 text = text[:200] + "..."
-            lines.append(f"• {name} — {creator}")
+            # 若有母任務，顯示「母任務 > 子任務」
+            if parent_gid and parent_name:
+                parent_link = slack_link(task_url(parent_gid), parent_name)
+                child_link = slack_link(task_url(task_gid), task_name)
+                display_name = f"{parent_link} > {child_link}"
+            else:
+                display_name = slack_link(task_url(task_gid), task_name)
+            lines.append(f"• {display_name} — {creator}")
             lines.append(f"  「{text}」")
             lines.append("")
     else:
@@ -277,6 +298,7 @@ def main():
                 section = sec.get("name", "")
                 break
         new_tasks.append({
+            "gid": task["gid"],
             "name": task.get("name", "未命名"),
             "creator": creator_name,
             "section": section,
@@ -296,6 +318,9 @@ def main():
     for i, task in enumerate(modified_tasks):
         task_gid = task["gid"]
         task_name = task.get("name", "未命名")
+        parent = task.get("parent") or {}
+        parent_gid = parent.get("gid")
+        parent_name = parent.get("name")
         print(f"   [{i+1}/{len(modified_tasks)}] 檢查: {task_name}")
 
         try:
@@ -310,6 +335,7 @@ def main():
             from_sec, to_sec = parse_section_change(sc["text"])
             if from_sec and to_sec:
                 all_section_moves.append({
+                    "task_gid": task_gid,
                     "task_name": task_name,
                     "from_section": from_sec,
                     "to_section": to_sec,
@@ -324,6 +350,7 @@ def main():
                 print(f"   ⚠️ 取得金額失敗: {e}")
                 amount = None
             invoice_tasks.append({
+                "task_gid": task_gid,
                 "name": task_name,
                 "amount": amount,
             })
@@ -332,7 +359,10 @@ def main():
 
         for c in comments:
             all_comments.append({
+                "task_gid": task_gid,
                 "task_name": task_name,
+                "parent_gid": parent_gid,
+                "parent_name": parent_name,
                 "text": c["text"],
                 "creator": c["creator"],
             })
