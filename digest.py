@@ -5,6 +5,7 @@ Asana 購案商機 — 每日更新摘要
 """
 
 import os
+import re
 import requests
 from datetime import datetime, timedelta, timezone
 
@@ -120,8 +121,15 @@ def filter_stories_in_range(stories, since_utc, until_utc):
                     "creator": creator_name,
                 })
         elif subtype == "comment_added":
+            # 排除系統自動化評論（creator 為 None）
+            if not creator:
+                continue
+            # 剔除文字中夾雜的 URL（@mention 被展開為連結）
+            clean_text = re.sub(r"https?://\S+", "", text).strip()
+            if not clean_text:
+                continue
             comments.append({
-                "text": text,
+                "text": clean_text,
                 "creator": creator_name,
             })
 
