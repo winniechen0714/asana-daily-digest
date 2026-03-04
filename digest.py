@@ -268,14 +268,17 @@ def send_to_slack(message):
 
 
 def main():
-    # 計算時間範圍：過去 24 小時
-    now_utc = datetime.now(timezone.utc)
-    until_utc = now_utc
-    since_utc = until_utc - timedelta(hours=24)
+    # 固定區間：台灣時間「今日 08:00」往前推至「昨日 08:00」
+    # 無論 GitHub Actions cron 幾點實際觸發，掃描範圍始終一致
+    now_tw = datetime.now(TW_TZ)
+    until_tw = now_tw.replace(hour=8, minute=0, second=0, microsecond=0)
+    if now_tw < until_tw:
+        # 防護：若腳本在今日 08:00 前執行，錨點往前一天
+        until_tw -= timedelta(days=1)
+    since_tw = until_tw - timedelta(days=1)
 
-    # 台灣時間（用於顯示）
-    since_tw = since_utc.astimezone(TW_TZ)
-    until_tw = until_utc.astimezone(TW_TZ)
+    until_utc = until_tw.astimezone(timezone.utc)
+    since_utc = since_tw.astimezone(timezone.utc)
 
     since_iso = since_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     until_iso = until_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
