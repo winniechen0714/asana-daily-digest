@@ -268,12 +268,12 @@ def send_to_slack(message):
 
 
 def main():
-    # 固定區間：台灣時間「今日 08:00」往前推至「昨日 08:00」
+    # 固定區間：台灣時間「今日 06:00」往前推至「昨日 06:00」
     # 無論 GitHub Actions cron 幾點實際觸發，掃描範圍始終一致
     now_tw = datetime.now(TW_TZ)
-    until_tw = now_tw.replace(hour=8, minute=0, second=0, microsecond=0)
+    until_tw = now_tw.replace(hour=6, minute=0, second=0, microsecond=0)
     if now_tw < until_tw:
-        # 防護：若腳本在今日 08:00 前執行，錨點往前一天
+        # 防護：若腳本在今日 06:00 前執行，錨點往前一天
         until_tw -= timedelta(days=1)
     since_tw = until_tw - timedelta(days=1)
 

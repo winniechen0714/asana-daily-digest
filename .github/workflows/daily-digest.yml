@@ -2,8 +2,8 @@ name: Asana 購案商機 — 每日更新摘要
 
 on:
   schedule:
-    # 每日 UTC 00:00 = 台灣時間 08:00
-    - cron: '0 0 * * *'
+    # 每日 UTC 22:00 = 台灣時間 06:00（避開 UTC 00:00 高峰，降低延遲）
+    - cron: '0 22 * * *'
   workflow_dispatch:
     # 支援手動觸發（方便測試）
 
