@@ -326,7 +326,7 @@ def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
         "projects.any": ASANA_PROJECT_GID,
         "is_subtask": False,
         "completed": False,
-        "opt_fields": "name,assignee.name,memberships.section.name,custom_fields.gid,custom_fields.date_value,custom_fields.name,custom_fields.enum_value",
+        "opt_fields": "name,assignee.name,memberships.section.name,custom_fields.gid,custom_fields.date_value,custom_fields.name,custom_fields.enum_value,custom_fields.enum_value.name",
         "limit": 100,
     }
     tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
@@ -342,6 +342,7 @@ def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
             if product_field_gid and cf.get("gid") == product_field_gid:
                 ev = cf.get("enum_value") or {}
                 product_value = ev.get("name") if isinstance(ev, dict) else None
+                print(f"   [debug] 任務「{task.get('name')}」購買商品={product_value!r}")
 
         if not expiry_date:
             continue
