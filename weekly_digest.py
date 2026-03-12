@@ -101,6 +101,7 @@ def get_weekly_invoice_tasks(since_iso, until_iso):
         "limit": 100,
     }
     modified_tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
+    print(f"   發票搜尋：API 回傳 {len(modified_tasks)} 筆修改過的任務")
 
     invoice_tasks = []
     invoice_total = 0
@@ -120,11 +121,15 @@ def get_weekly_invoice_tasks(since_iso, until_iso):
             if story.get("resource_subtype") != "section_changed":
                 continue
             created = story.get("created_at", "")
-            if not (since_iso <= created <= until_iso):
-                continue
-            if INVOICE_SECTION_NAME in story.get("text", ""):
+            text = story.get("text", "")
+            in_range = since_iso <= created <= until_iso
+            has_keyword = INVOICE_SECTION_NAME in text
+            if in_range and has_keyword:
                 has_invoice_move = True
+                print(f"   ✅ 發票命中: {task_name} | story: {text[:80]}")
                 break
+            elif "section_changed" and ("售後" in text or "發票" in text):
+                print(f"   ⚠️ 未命中: {task_name} | in_range={in_range} | text={text[:80]}")
 
         if not has_invoice_move:
             continue
