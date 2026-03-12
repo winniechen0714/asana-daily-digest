@@ -317,7 +317,7 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
         "projects.any": ASANA_PROJECT_GID,
         "is_subtask": False,
         "completed": False,
-        "opt_fields": "name,assignee.name,memberships.section.name,custom_fields.gid,custom_fields.date_value,custom_fields.name,custom_fields.enum_value,custom_fields.enum_value.name",
+        "opt_fields": "name,assignee.name,memberships.section.name,custom_fields.gid,custom_fields.name,custom_fields.date_value,custom_fields.enum_value,custom_fields.enum_value.name,custom_fields.multi_enum_values,custom_fields.multi_enum_values.name",
         "limit": 100,
     }
     tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
@@ -571,7 +571,7 @@ def main():
     renewal_tasks = get_renewal_tasks(expiry_field_gid, today_tw)
     print(f"   找到 {len(renewal_tasks)} 筆")
 
-    # 4. 停滯任務
+    # 5. 停滯任務
     print(f"\n🔍 搜尋 {STALE_DAYS}~{STALE_MAX_DAYS} 天未異動的任務...")
     stale_tasks = get_stale_tasks(stale_before_iso, stale_after_iso)
     print(f"   找到 {len(stale_tasks)} 筆")
