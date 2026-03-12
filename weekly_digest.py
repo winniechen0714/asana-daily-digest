@@ -91,22 +91,35 @@ def get_expiry_field_gid():
 
 # ===== 本週開立發票 =====
 
+def get_invoice_section_gid():
+    """取得發票區段的 GID"""
+    sections = asana_get(f"projects/{ASANA_PROJECT_GID}/sections", {
+        "opt_fields": "name",
+    })
+    for s in sections:
+        if s.get("name") == INVOICE_SECTION_NAME:
+            return s.get("gid")
+    return None
+
+
 def get_weekly_invoice_tasks(since_iso, until_iso):
-    """找出本週有移動到/移出發票區段的任務，並加總金額"""
-    params = {
-        "modified_at.after": since_iso,
-        "modified_at.before": until_iso,
-        "projects.any": ASANA_PROJECT_GID,
-        "opt_fields": "name,modified_at",
+    """直接抓發票區段的任務，再確認本週是否有移入紀錄"""
+    section_gid = get_invoice_section_gid()
+    if not section_gid:
+        print(f"   ⚠️ 找不到發票區段：{INVOICE_SECTION_NAME}")
+        return [], 0
+
+    # 取得目前在發票區段的所有任務
+    section_tasks = asana_get(f"sections/{section_gid}/tasks", {
+        "opt_fields": "name",
         "limit": 100,
-    }
-    modified_tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
-    print(f"   發票搜尋：API 回傳 {len(modified_tasks)} 筆修改過的任務")
+    })
+    print(f"   發票區段目前有 {len(section_tasks)} 筆任務")
 
     invoice_tasks = []
     invoice_total = 0
 
-    for task in modified_tasks:
+    for task in section_tasks:
         task_gid = task["gid"]
         task_name = task.get("name", "未命名")
         try:
@@ -116,20 +129,17 @@ def get_weekly_invoice_tasks(since_iso, until_iso):
         except Exception:
             continue
 
+        # 確認本週是否有移入發票區段的紀錄
         has_invoice_move = False
         for story in stories:
             if story.get("resource_subtype") != "section_changed":
                 continue
             created = story.get("created_at", "")
             text = story.get("text", "")
-            in_range = since_iso <= created <= until_iso
-            has_keyword = INVOICE_SECTION_NAME in text
-            if in_range and has_keyword:
+            if since_iso <= created <= until_iso and INVOICE_SECTION_NAME in text:
                 has_invoice_move = True
-                print(f"   ✅ 發票命中: {task_name} | story: {text[:80]}")
+                print(f"   ✅ 本週移入: {task_name}")
                 break
-            elif "section_changed" and ("售後" in text or "發票" in text):
-                print(f"   ⚠️ 未命中: {task_name} | in_range={in_range} | text={text[:80]}")
 
         if not has_invoice_move:
             continue
