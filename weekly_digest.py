@@ -379,17 +379,24 @@ def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
 # ===== 停滯任務 =====
 
 def get_stale_tasks(stale_before_iso):
-    """取得超過 30 天未異動且尚未完成的任務"""
+    """取得超過 30 天未異動且尚未完成的任務（只查白名單區段）"""
+    # 取得白名單區段的 GID
+    all_sections = asana_get(f"projects/{ASANA_PROJECT_GID}/sections", {"opt_fields": "name"})
+    watch_gids = [s["gid"] for s in all_sections if s.get("name") in STALE_WATCH_SECTIONS]
+    if not watch_gids:
+        print("   ⚠️ 找不到任何白名單區段，跳過停滯任務")
+        return []
+
     params = {
         "modified_at.before": stale_before_iso,
-        "projects.any": ASANA_PROJECT_GID,
+        "sections.any": ",".join(watch_gids),
         "is_subtask": "false",
         "completed": "false",
         "opt_fields": "name,modified_at,memberships.section.name,assignee.name",
         "limit": 100,
     }
     tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
-    print(f"   API 回傳 {len(tasks)} 筆（篩選前）")
+    print(f"   API 回傳 {len(tasks)} 筆")
     result = []
     for task in tasks:
         section = ""
@@ -398,9 +405,6 @@ def get_stale_tasks(stale_before_iso):
             if sec:
                 section = sec.get("name", "")
                 break
-        print(f"   - [{section}] {task.get('name', '')}")
-        if section not in STALE_WATCH_SECTIONS:
-            continue
         assignee = task.get("assignee", {})
         result.append({
             "gid": task["gid"],
