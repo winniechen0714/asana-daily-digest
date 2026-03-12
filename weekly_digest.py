@@ -98,21 +98,6 @@ def get_expiry_field_gid():
     return None
 
 
-def get_product_field_gid():
-    """動態查找「購買商品」custom field 的 GID"""
-    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
-    params = {"opt_fields": "custom_field_settings.custom_field.gid,custom_field_settings.custom_field.name"}
-    resp = requests.get(f"{ASANA_BASE}/projects/{ASANA_PROJECT_GID}", headers=headers, params=params)
-    resp.raise_for_status()
-    settings = resp.json().get("data", {}).get("custom_field_settings", [])
-    all_names = [s.get("custom_field", {}).get("name") for s in settings]
-    print(f"   [debug] 專案所有自訂欄位名稱: {all_names}")
-    for s in settings:
-        cf = s.get("custom_field", {})
-        if cf.get("name") == PRODUCT_FIELD_NAME:
-            return cf.get("gid")
-    return None
-
 
 # ===== 本週開立發票 =====
 
@@ -314,7 +299,7 @@ def get_section_moves(since_iso, until_iso):
 
 # ===== 續約聯絡期（環境到期日在 3 個月內）=====
 
-def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
+def get_renewal_tasks(expiry_field_gid, today_tw):
     """取得環境到期日在今天到 3 個月後之間的未完成任務（排除加購服務）"""
     if not expiry_field_gid:
         print("   ⚠️ 找不到「環境到期日」欄位，跳過續約聯絡期")
@@ -343,7 +328,8 @@ def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
             if cf.get("gid") == expiry_field_gid:
                 dv = cf.get("date_value") or {}
                 expiry_date = dv.get("date") if isinstance(dv, dict) else None
-            if product_field_gid and cf.get("gid") == product_field_gid:
+            # 用欄位名稱比對，避免跨專案 GID 不一致的問題
+            if cf.get("name") == PRODUCT_FIELD_NAME:
                 ev = cf.get("enum_value") or {}
                 product_value = ev.get("name") if isinstance(ev, dict) and ev else None
                 if product_value is None:
@@ -558,11 +544,6 @@ def main():
     expiry_field_gid = get_expiry_field_gid()
     print(f"   GID: {expiry_field_gid or '找不到'}")
 
-    # 查找購買商品欄位 GID
-    print("\n🔍 查找「購買商品」欄位...")
-    product_field_gid = get_product_field_gid()
-    print(f"   GID: {product_field_gid or '找不到'}")
-
     # 1. 本週發票
     print("\n🔍 搜尋本週開立發票...")
     invoice_tasks, invoice_total = get_weekly_invoice_tasks(since_iso, until_iso)
@@ -580,7 +561,7 @@ def main():
 
     # 4. 續約聯絡期
     print(f"\n🔍 搜尋 {RENEWAL_MONTHS} 個月內到期的任務...")
-    renewal_tasks = get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid)
+    renewal_tasks = get_renewal_tasks(expiry_field_gid, today_tw)
     print(f"   找到 {len(renewal_tasks)} 筆")
 
     # 4. 停滯任務
