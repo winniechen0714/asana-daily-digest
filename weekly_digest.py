@@ -275,12 +275,13 @@ def get_stale_tasks(stale_before_iso):
     params = {
         "modified_at.before": stale_before_iso,
         "projects.any": ASANA_PROJECT_GID,
-        "is_subtask": False,
-        "completed": False,
+        "is_subtask": "false",
+        "completed": "false",
         "opt_fields": "name,modified_at,memberships.section.name,assignee.name",
         "limit": 100,
     }
     tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
+    print(f"   API 回傳 {len(tasks)} 筆（篩選前）")
     result = []
     for task in tasks:
         section = ""
@@ -289,6 +290,7 @@ def get_stale_tasks(stale_before_iso):
             if sec:
                 section = sec.get("name", "")
                 break
+        print(f"   - [{section}] {task.get('name', '')}")
         if section not in STALE_WATCH_SECTIONS:
             continue
         assignee = task.get("assignee", {})
