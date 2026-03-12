@@ -325,7 +325,7 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
     result = []
     for task in tasks:
         expiry_date = None
-        product_value = None
+        product_values = set()
 
         for cf in task.get("custom_fields", []):
             if cf.get("gid") == expiry_field_gid:
@@ -334,10 +334,11 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
             # 用欄位名稱比對，避免跨專案 GID 不一致的問題
             if cf.get("name") == PRODUCT_FIELD_NAME:
                 ev = cf.get("enum_value") or {}
-                product_value = ev.get("name") if isinstance(ev, dict) and ev else None
-                if product_value is None:
-                    multi = cf.get("multi_enum_values") or []
-                    product_value = multi[0].get("name") if multi else None
+                if isinstance(ev, dict) and ev.get("name"):
+                    product_values.add(ev["name"])
+                for mv in cf.get("multi_enum_values") or []:
+                    if mv.get("name"):
+                        product_values.add(mv["name"])
 
         # 提前解析 section（後面過濾需要用到）
         section = ""
@@ -354,8 +355,8 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
         if not (today_str <= expiry_date <= deadline_str):
             continue
 
-        # 排除加購服務：自訂欄位 或 區段名稱含加購關鍵字
-        if product_value in ADDON_SERVICE_VALUES:
+        # 排除加購服務：自訂欄位任一值符合 或 區段名稱含加購關鍵字
+        if product_values & ADDON_SERVICE_VALUES:
             continue
         if any(kw in section for kw in ADDON_SECTION_KEYWORDS):
             continue
