@@ -29,6 +29,13 @@ INVOICE_SECTION_NAME = "售後服務(已開立發票、未收款)"
 PAYMENT_SECTION_NAME = "已開發票、且已收款(售後須追蹤方案到期日)"
 AMOUNT_FIELD_GID = "1211061298683016"       # 實際成交金額(稅後)
 EXPIRY_FIELD_NAME = "環境到期日"            # 用名稱動態查找 GID
+PRODUCT_FIELD_NAME = "購買商品"            # 用名稱動態查找 GID
+ADDON_SERVICE_VALUES = {                   # 加購服務不列入續約聯絡期
+    "字數加購",
+    "Web Chat 公版開發授權",
+    "容量加購",
+    "線上教育訓練",
+}
 
 # 停滯任務只追蹤這些區段（其餘皆忽略）
 STALE_WATCH_SECTIONS = {
@@ -86,6 +93,20 @@ def get_expiry_field_gid():
     for s in settings:
         cf = s.get("custom_field", {})
         if cf.get("name") == EXPIRY_FIELD_NAME:
+            return cf.get("gid")
+    return None
+
+
+def get_product_field_gid():
+    """動態查找「購買商品」custom field 的 GID"""
+    headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
+    params = {"opt_fields": "custom_field_settings.custom_field.gid,custom_field_settings.custom_field.name"}
+    resp = requests.get(f"{ASANA_BASE}/projects/{ASANA_PROJECT_GID}", headers=headers, params=params)
+    resp.raise_for_status()
+    settings = resp.json().get("data", {}).get("custom_field_settings", [])
+    for s in settings:
+        cf = s.get("custom_field", {})
+        if cf.get("name") == PRODUCT_FIELD_NAME:
             return cf.get("gid")
     return None
 
@@ -290,8 +311,8 @@ def get_section_moves(since_iso, until_iso):
 
 # ===== 續約聯絡期（環境到期日在 3 個月內）=====
 
-def get_renewal_tasks(expiry_field_gid, today_tw):
-    """取得環境到期日在今天到 3 個月後之間的未完成任務"""
+def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
+    """取得環境到期日在今天到 3 個月後之間的未完成任務（排除加購服務）"""
     if not expiry_field_gid:
         print("   ⚠️ 找不到「環境到期日」欄位，跳過續約聯絡期")
         return []
@@ -305,7 +326,7 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
         "projects.any": ASANA_PROJECT_GID,
         "is_subtask": False,
         "completed": False,
-        "opt_fields": f"name,assignee.name,memberships.section.name,custom_fields.gid,custom_fields.date_value,custom_fields.name",
+        "opt_fields": "name,assignee.name,memberships.section.name,custom_fields.gid,custom_fields.date_value,custom_fields.name,custom_fields.enum_value",
         "limit": 100,
     }
     tasks = asana_get(f"workspaces/{ASANA_WORKSPACE_GID}/tasks/search", params)
@@ -313,17 +334,24 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
     result = []
     for task in tasks:
         expiry_date = None
+        product_value = None
         for cf in task.get("custom_fields", []):
             if cf.get("gid") == expiry_field_gid:
                 dv = cf.get("date_value") or {}
                 expiry_date = dv.get("date") if isinstance(dv, dict) else None
-                break
+            if product_field_gid and cf.get("gid") == product_field_gid:
+                ev = cf.get("enum_value") or {}
+                product_value = ev.get("name") if isinstance(ev, dict) else None
 
         if not expiry_date:
             continue
 
         # 篩選今天 ~ 3 個月後到期
         if not (today_str <= expiry_date <= deadline_str):
+            continue
+
+        # 排除加購服務
+        if product_value in ADDON_SERVICE_VALUES:
             continue
 
         section = ""
@@ -516,6 +544,11 @@ def main():
     expiry_field_gid = get_expiry_field_gid()
     print(f"   GID: {expiry_field_gid or '找不到'}")
 
+    # 查找購買商品欄位 GID
+    print("\n🔍 查找「購買商品」欄位...")
+    product_field_gid = get_product_field_gid()
+    print(f"   GID: {product_field_gid or '找不到'}")
+
     # 1. 本週發票
     print("\n🔍 搜尋本週開立發票...")
     invoice_tasks, invoice_total = get_weekly_invoice_tasks(since_iso, until_iso)
@@ -533,7 +566,7 @@ def main():
 
     # 4. 續約聯絡期
     print(f"\n🔍 搜尋 {RENEWAL_MONTHS} 個月內到期的任務...")
-    renewal_tasks = get_renewal_tasks(expiry_field_gid, today_tw)
+    renewal_tasks = get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid)
     print(f"   找到 {len(renewal_tasks)} 筆")
 
     # 4. 停滯任務
