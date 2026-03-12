@@ -23,6 +23,7 @@ ASANA_BASE = "https://app.asana.com/api/1.0"
 
 TW_TZ = timezone(timedelta(hours=8))
 STALE_DAYS = 30          # 超過幾天沒異動視為停滯
+STALE_MAX_DAYS = 60      # 停滯任務最多追蹤幾天（超過此天數不顯示）
 RENEWAL_MONTHS = 3       # 幾個月內到期視為續約聯絡期
 
 INVOICE_SECTION_NAME = "售後服務(已開立發票、未收款)"
@@ -373,8 +374,8 @@ def get_renewal_tasks(expiry_field_gid, today_tw):
 
 # ===== 停滯任務 =====
 
-def get_stale_tasks(stale_before_iso):
-    """取得超過 30 天未異動且尚未完成的任務（只查白名單區段）"""
+def get_stale_tasks(stale_before_iso, stale_after_iso):
+    """取得 30~60 天未異動且尚未完成的任務（只查白名單區段）"""
     # 取得白名單區段的 GID
     all_sections = asana_get(f"projects/{ASANA_PROJECT_GID}/sections", {"opt_fields": "name"})
     watch_gids = [s["gid"] for s in all_sections if s.get("name") in STALE_WATCH_SECTIONS]
@@ -384,6 +385,7 @@ def get_stale_tasks(stale_before_iso):
 
     params = {
         "modified_at.before": stale_before_iso,
+        "modified_at.after": stale_after_iso,
         "sections.any": ",".join(watch_gids),
         "is_subtask": "false",
         "completed": "false",
@@ -496,7 +498,7 @@ def build_message(invoice_tasks, invoice_total, payment_tasks, payment_total, se
     lines.append("")
 
     # 4. 停滯任務
-    lines.append(f"▶ 【⚠️ 超過 {STALE_DAYS} 天未異動】（{len(stale_tasks)} 筆）")
+    lines.append(f"▶ 【⚠️ {STALE_DAYS}~{STALE_MAX_DAYS} 天未異動】（{len(stale_tasks)} 筆）")
     lines.append("")
     if stale_tasks:
         for task in stale_tasks:
@@ -508,7 +510,7 @@ def build_message(invoice_tasks, invoice_total, payment_tasks, payment_total, se
             lines.append(f"  最後異動：{modified}｜階段：{section}｜負責人：{assignee}")
             lines.append("")
     else:
-        lines.append(f"目前無超過 {STALE_DAYS} 天未異動的任務 👍")
+        lines.append(f"目前無 {STALE_DAYS}~{STALE_MAX_DAYS} 天未異動的任務 👍")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -532,10 +534,12 @@ def main():
     until_tw = now_tw.replace(hour=0, minute=0, second=0, microsecond=0)
     since_tw = until_tw - timedelta(days=7)
     stale_before_tw = now_tw - timedelta(days=STALE_DAYS)
+    stale_after_tw = now_tw - timedelta(days=STALE_MAX_DAYS)
 
     since_iso = since_tw.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     until_iso = until_tw.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     stale_before_iso = stale_before_tw.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    stale_after_iso = stale_after_tw.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     print(f"📅 週報範圍: {since_tw.strftime('%Y/%m/%d')} ~ {until_tw.strftime('%Y/%m/%d')} (台灣時間)")
 
@@ -565,8 +569,8 @@ def main():
     print(f"   找到 {len(renewal_tasks)} 筆")
 
     # 4. 停滯任務
-    print(f"\n🔍 搜尋超過 {STALE_DAYS} 天未異動的任務...")
-    stale_tasks = get_stale_tasks(stale_before_iso)
+    print(f"\n🔍 搜尋 {STALE_DAYS}~{STALE_MAX_DAYS} 天未異動的任務...")
+    stale_tasks = get_stale_tasks(stale_before_iso, stale_after_iso)
     print(f"   找到 {len(stale_tasks)} 筆")
 
     # 組合並發送
