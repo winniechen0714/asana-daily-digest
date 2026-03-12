@@ -1,0 +1,30 @@
+name: Asana 購案商機 — 每週更新摘要
+
+on:
+  schedule:
+    # 每週一 UTC 00:00 = 台灣時間 08:00
+    - cron: '0 0 * * 1'
+  workflow_dispatch:
+    # 支援手動觸發（方便測試）
+
+jobs:
+  send-weekly-digest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run weekly digest script
+        env:
+          ASANA_TOKEN: ${{ secrets.ASANA_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python weekly_digest.py
