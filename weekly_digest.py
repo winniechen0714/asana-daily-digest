@@ -26,6 +26,7 @@ STALE_DAYS = 30          # 超過幾天沒異動視為停滯
 RENEWAL_MONTHS = 3       # 幾個月內到期視為續約聯絡期
 
 INVOICE_SECTION_NAME = "售後服務(已開立發票、未收款)"
+PAYMENT_SECTION_NAME = "已開發票、且已收款(售後須追蹤方案到期日)"
 AMOUNT_FIELD_GID = "1211061298683016"       # 實際成交金額(稅後)
 EXPIRY_FIELD_NAME = "環境到期日"            # 用名稱動態查找 GID
 
@@ -166,6 +167,69 @@ def get_weekly_invoice_tasks(since_iso, until_iso):
             invoice_total += amount
 
     return invoice_tasks, invoice_total
+
+
+# ===== 本週已收款 =====
+
+def get_weekly_payment_tasks(since_iso, until_iso):
+    """直接抓已收款區段的任務，再確認本週是否有移入紀錄"""
+    sections = asana_get(f"projects/{ASANA_PROJECT_GID}/sections", {"opt_fields": "name"})
+    section_gid = next((s["gid"] for s in sections if s.get("name") == PAYMENT_SECTION_NAME), None)
+    if not section_gid:
+        print(f"   ⚠️ 找不到已收款區段：{PAYMENT_SECTION_NAME}")
+        return [], 0
+
+    section_tasks = asana_get(f"sections/{section_gid}/tasks", {"opt_fields": "name", "limit": 100})
+    print(f"   已收款區段目前有 {len(section_tasks)} 筆任務")
+
+    payment_tasks = []
+    payment_total = 0
+
+    for task in section_tasks:
+        task_gid = task["gid"]
+        task_name = task.get("name", "未命名")
+        try:
+            stories = asana_get(f"tasks/{task_gid}/stories", {
+                "opt_fields": "created_at,resource_subtype,text",
+            })
+        except Exception:
+            continue
+
+        has_payment_move = False
+        for story in stories:
+            if story.get("resource_subtype") != "section_changed":
+                continue
+            created = story.get("created_at", "")
+            text = story.get("text", "")
+            if since_iso <= created <= until_iso and PAYMENT_SECTION_NAME in text:
+                has_payment_move = True
+                print(f"   ✅ 本週移入: {task_name}")
+                break
+
+        if not has_payment_move:
+            continue
+
+        try:
+            headers = {"Authorization": f"Bearer {ASANA_TOKEN}"}
+            r = requests.get(
+                f"{ASANA_BASE}/tasks/{task_gid}",
+                headers=headers,
+                params={"opt_fields": "custom_fields.gid,custom_fields.number_value"},
+            )
+            r.raise_for_status()
+            amount = None
+            for cf in r.json().get("data", {}).get("custom_fields", []):
+                if cf.get("gid") == AMOUNT_FIELD_GID:
+                    amount = cf.get("number_value")
+                    break
+        except Exception:
+            amount = None
+
+        payment_tasks.append({"task_gid": task_gid, "name": task_name, "amount": amount})
+        if amount is not None:
+            payment_total += amount
+
+    return payment_tasks, payment_total
 
 
 # ===== 階段移動 =====
@@ -322,7 +386,7 @@ def get_stale_tasks(stale_before_iso):
 
 # ===== 組合訊息 =====
 
-def build_message(invoice_tasks, invoice_total, section_moves, renewal_tasks, stale_tasks, since_tw, until_tw):
+def build_message(invoice_tasks, invoice_total, payment_tasks, payment_total, section_moves, renewal_tasks, stale_tasks, since_tw, until_tw):
     weekdays = ["一", "二", "三", "四", "五", "六", "日"]
     since_str = f"{since_tw.strftime('%Y/%m/%d')} ({weekdays[since_tw.weekday()]})"
     until_str = f"{until_tw.strftime('%Y/%m/%d')} ({weekdays[until_tw.weekday()]})"
@@ -352,7 +416,25 @@ def build_message(invoice_tasks, invoice_total, section_moves, renewal_tasks, st
     lines.append("---")
     lines.append("")
 
-    # 2. 階段移動
+    # 2. 本週已收款
+    lines.append("▶ 【本週已收款金額】")
+    lines.append("")
+    if payment_tasks:
+        total_str = f"NT$ {payment_total:,.0f}" if payment_total > 0 else "（所有任務均未填寫金額）"
+        lines.append(f"💵 合計：{total_str}")
+        lines.append("")
+        for task in payment_tasks:
+            amt = task["amount"]
+            amt_str = f"NT$ {amt:,.0f}" if amt is not None else "（未填寫）"
+            name_link = slack_link(task_url(task["task_gid"]), task["name"])
+            lines.append(f"• {name_link} — {amt_str}")
+    else:
+        lines.append("本週無已收款紀錄")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # 4. 階段移動
     lines.append(f"▶ 【本週任務階段移動】（{len(section_moves)} 筆）")
     lines.append("")
     if section_moves:
@@ -439,12 +521,17 @@ def main():
     invoice_tasks, invoice_total = get_weekly_invoice_tasks(since_iso, until_iso)
     print(f"   找到 {len(invoice_tasks)} 筆，合計 NT$ {invoice_total:,.0f}")
 
-    # 2. 階段移動
+    # 2. 本週已收款
+    print("\n🔍 搜尋本週已收款...")
+    payment_tasks, payment_total = get_weekly_payment_tasks(since_iso, until_iso)
+    print(f"   找到 {len(payment_tasks)} 筆，合計 NT$ {payment_total:,.0f}")
+
+    # 3. 階段移動
     print("\n🔍 搜尋本週階段移動...")
     section_moves = get_section_moves(since_iso, until_iso)
     print(f"   找到 {len(section_moves)} 筆")
 
-    # 3. 續約聯絡期
+    # 4. 續約聯絡期
     print(f"\n🔍 搜尋 {RENEWAL_MONTHS} 個月內到期的任務...")
     renewal_tasks = get_renewal_tasks(expiry_field_gid, today_tw)
     print(f"   找到 {len(renewal_tasks)} 筆")
@@ -455,7 +542,7 @@ def main():
     print(f"   找到 {len(stale_tasks)} 筆")
 
     # 組合並發送
-    message = build_message(invoice_tasks, invoice_total, section_moves, renewal_tasks, stale_tasks, since_tw, until_tw)
+    message = build_message(invoice_tasks, invoice_total, payment_tasks, payment_total, section_moves, renewal_tasks, stale_tasks, since_tw, until_tw)
     print("\n📤 發送到 Slack...")
     send_to_slack(message)
     print("✅ 完成！")
