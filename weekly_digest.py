@@ -104,6 +104,8 @@ def get_product_field_gid():
     resp = requests.get(f"{ASANA_BASE}/projects/{ASANA_PROJECT_GID}", headers=headers, params=params)
     resp.raise_for_status()
     settings = resp.json().get("data", {}).get("custom_field_settings", [])
+    all_names = [s.get("custom_field", {}).get("name") for s in settings]
+    print(f"   [debug] 專案所有自訂欄位名稱: {all_names}")
     for s in settings:
         cf = s.get("custom_field", {})
         if cf.get("name") == PRODUCT_FIELD_NAME:
@@ -340,9 +342,13 @@ def get_renewal_tasks(expiry_field_gid, today_tw, product_field_gid=None):
                 dv = cf.get("date_value") or {}
                 expiry_date = dv.get("date") if isinstance(dv, dict) else None
             if product_field_gid and cf.get("gid") == product_field_gid:
+                # 同時支援單選(enum_value)與多選(multi_enum_values)
                 ev = cf.get("enum_value") or {}
-                product_value = ev.get("name") if isinstance(ev, dict) else None
-                print(f"   [debug] 任務「{task.get('name')}」購買商品={product_value!r}")
+                product_value = ev.get("name") if isinstance(ev, dict) and ev else None
+                if product_value is None:
+                    multi = cf.get("multi_enum_values") or []
+                    product_value = multi[0].get("name") if multi else None
+                print(f"   [debug] 任務「{task.get('name')}」購買商品={product_value!r} raw={cf}")
 
         if not expiry_date:
             continue
