@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
     # 支援手動觸發（方便測試）
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   send-digest:
     runs-on: ubuntu-latest
