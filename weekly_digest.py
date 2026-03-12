@@ -29,12 +29,10 @@ INVOICE_SECTION_NAME = "售後服務(已開立發票、未收款)"
 AMOUNT_FIELD_GID = "1211061298683016"       # 實際成交金額(稅後)
 EXPIRY_FIELD_NAME = "環境到期日"            # 用名稱動態查找 GID
 
-# 停滯任務排除的區段（已結案或無需追蹤）
-STALE_EXCLUDE_SECTIONS = {
-    "結案-暫無需求(無購買)",
-    "棄用",
-    "任務重複",
-    "結案-專案完成(有執行後單一任務結束)",
+# 停滯任務只追蹤這些區段（其餘皆忽略）
+STALE_WATCH_SECTIONS = {
+    "最終報價",
+    "等待訂單",
 }
 
 
@@ -282,7 +280,7 @@ def get_stale_tasks(stale_before_iso):
             if sec:
                 section = sec.get("name", "")
                 break
-        if section in STALE_EXCLUDE_SECTIONS:
+        if section not in STALE_WATCH_SECTIONS:
             continue
         assignee = task.get("assignee", {})
         result.append({
