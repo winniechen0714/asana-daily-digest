@@ -7,6 +7,10 @@ on:
   workflow_dispatch:
     # 支援手動觸發（方便測試）
 
+concurrency:
+  group: daily-digest
+  cancel-in-progress: true
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
