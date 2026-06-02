@@ -1,0 +1,35 @@
+name: Keepalive — 防止 scheduled workflow 因無活動被停用
+
+# 背景：GitHub Actions 規定，repo 若連續 60 天無 push 活動，
+# 所有 scheduled workflow 會被自動停用。
+# 此 workflow 每月 1 號觸發，若距離上次 commit > 50 天，
+# 自動 push 一筆 empty commit 重置 60 天計時器。
+
+on:
+  schedule:
+    # 每月 1 號 UTC 08:00 = 台灣時間 16:00
+    - cron: '0 8 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Push empty commit if > 50 天未活動
+        run: |
+          DAYS=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "距離上次 commit: $DAYS 天"
+          if [ "$DAYS" -lt 50 ]; then
+            echo "未達 50 天，跳過 keepalive"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive ($(date +%Y-%m-%d))"
+          git push
